@@ -177,6 +177,7 @@ impl LocalCa {
 }
 
 /// Result of attempting to trust the CA.
+#[allow(dead_code)] // `Installed` is only constructed on platforms with automatic trust (Windows)
 pub enum TrustOutcome {
     /// Trust installed automatically.
     Installed,
