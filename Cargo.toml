@@ -1,0 +1,72 @@
+[package]
+name = "replaykit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+authors = ["replaykit contributors"]
+description = "A deterministic record-and-replay proxy for AI agents. Freeze the world, reproduce any run."
+documentation = "https://github.com/aryxnsdfs/replaykit"
+homepage = "https://github.com/aryxnsdfs/replaykit"
+repository = "https://github.com/aryxnsdfs/replaykit"
+license = "MIT"
+readme = "README.md"
+keywords = ["ai", "agents", "record-replay", "proxy", "determinism"]
+categories = ["command-line-utilities", "development-tools", "web-programming"]
+exclude = ["runs/", "examples/runs/", ".github/", "assets/screenshots/"]
+
+[[bin]]
+name = "replaykit"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "signal"] }
+
+# HTTP / proxy core
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "server", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+
+# TLS (MITM). ring-only (no aws-lc-rs) keeps cross-compilation dependency-light.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+webpki-roots = "0.26"
+
+# Storage
+zstd = "0.13"
+blake3 = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI + UX
+clap = { version = "4", features = ["derive", "env"] }
+owo-colors = "4"
+
+# Embedded dashboard assets
+rust-embed = { version = "8", features = ["mime-guess"] }
+
+# Utilities
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+dirs = "5"
+time = { version = "0.3", features = ["formatting", "macros"] }
+percent-encoding = "2"
+similar = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

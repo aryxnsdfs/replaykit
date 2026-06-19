@@ -1,0 +1,29 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# replaykit runtime output
+/runs/
+/examples/runs/
+*.cassette/
+
+# CA material should never be committed
+/ca/
+*.pem
+*.key
+!examples/**/*.pem
+
+# Python demo
+__pycache__/
+*.pyc
+.venv/
+venv/
+examples/.venv/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

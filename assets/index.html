@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>replaykit · run viewer</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">replaykit</span>
+      <span class="sub">run viewer</span>
+    </div>
+    <div id="summary" class="summary"></div>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <span>Interactions</span>
+        <span id="count" class="count"></span>
+      </div>
+      <ul id="list"></ul>
+    </aside>
+
+    <section id="detail">
+      <div class="empty" id="empty">
+        <p>Select an interaction on the left to inspect its request and response.</p>
+        <p class="hint">Diverged steps are marked <span class="badge diverge">diverged</span>.</p>
+      </div>
+      <article id="view" hidden>
+        <div id="divergence-banner" class="divergence-banner" hidden></div>
+        <div class="panes">
+          <div class="pane">
+            <h2>Request</h2>
+            <div class="line"><span id="req-method" class="method"></span> <span id="req-url" class="url"></span></div>
+            <h3>Headers</h3>
+            <table id="req-headers" class="headers"></table>
+            <h3>Body</h3>
+            <pre id="req-body" class="body"></pre>
+          </div>
+          <div class="pane">
+            <h2>Response <span id="resp-status" class="status"></span> <span id="resp-stream" class="badge stream" hidden>stream</span></h2>
+            <h3>Headers</h3>
+            <table id="resp-headers" class="headers"></table>
+            <h3>Body</h3>
+            <pre id="resp-body" class="body"></pre>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
