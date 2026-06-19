@@ -265,9 +265,13 @@ mod tests {
     #[test]
     fn thousand_interactions_dedup_and_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let writer =
-            CassetteWriter::create(dir.path(), "scale".into(), "2026-01-01T00:00:00Z".into(), None)
-                .unwrap();
+        let writer = CassetteWriter::create(
+            dir.path(),
+            "scale".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+        )
+        .unwrap();
         let cfg = MatchConfig::default();
         let headers = vec![("content-type".to_string(), "application/json".to_string())];
 
@@ -279,7 +283,8 @@ mod tests {
                 "{{\"role\":\"user\",\"content\":\"turn {step}: the agent resends the whole history every single time, which is exactly the repetition replaykit must dedup\"}},"
             ));
             let body = format!("{{\"model\":\"gpt-4o\",\"messages\":[{history}]}}").into_bytes();
-            let resp = format!("{{\"id\":\"chatcmpl-{step}\",\"choices\":[{{\"index\":0}}]}}").into_bytes();
+            let resp = format!("{{\"id\":\"chatcmpl-{step}\",\"choices\":[{{\"index\":0}}]}}")
+                .into_bytes();
 
             let req_refs = writer.store().put_body(&body).unwrap();
             let resp_refs = writer.store().put_body(&resp).unwrap();
@@ -306,7 +311,7 @@ mod tests {
                     headers: vec![Header::new("content-type", "application/json")],
                     body: req_refs,
                     body_len: body.len() as u64,
-                    },
+                },
                 response: ResponseRecord {
                     status: 200,
                     headers: vec![],
