@@ -204,6 +204,65 @@ vLLM and LM Studio expose an OpenAI-compatible API, so most OpenAI agents work
 unchanged — just point the SDK's `base_url` at the proxy (`$REPLAYKIT_PROXY`)
 or rely on the `OPENAI_BASE_URL` that `run` exports.
 
+#### Ollama, step by step (with the `ollama` CLI)
+
+A network proxy can't grab traffic your client sends **straight to**
+`localhost:11434` — so you redirect the Ollama client at the proxy with
+`OLLAMA_HOST`. The proxy then forwards to the real Ollama. Two rules:
+
+1. **Same port** in `--port` and `OLLAMA_HOST`.
+2. The daemon **blocks its terminal** — run your agent in a **second** terminal.
+
+**Terminal 1 — start the daemon (leave it running):**
+```bash
+replaykit daemon --preset ollama --cassette runs/ollama --port 8090
+```
+
+**Terminal 2 — redirect the client, then use Ollama normally:**
+```bash
+# macOS / Linux
+export OLLAMA_HOST=http://localhost:8090
+ollama run qwen2.5:0.5b "Name three fruits"     # 1st time: runs the model, records
+ollama run qwen2.5:0.5b "Name three fruits"     # 2nd time: identical, served from disk
+```
+```powershell
+# Windows PowerShell (use the SAME port, 8090)
+$env:OLLAMA_HOST = "http://localhost:8090"
+ollama run qwen2.5:0.5b "Name three fruits"
+ollama run qwen2.5:0.5b "Name three fruits"
+```
+
+**Proof it worked:** the **2nd answer is word-for-word identical** to the first
+(replayed from disk — no restart needed). Different wording means the redirect
+isn't active (wrong port, or you set `OLLAMA_HOST` in a different window).
+
+**Verify offline:** stop Ollama entirely and ask the same thing again — it still
+answers, from the cassette:
+```bash
+replaykit inspect runs/ollama        # should show interactions > 0
+```
+
+**Make the redirect stick (so you don't set it each session):**
+```powershell
+setx OLLAMA_HOST http://localhost:8090     # Windows: persists for new terminals
+```
+```bash
+echo 'export OLLAMA_HOST=http://localhost:8090' >> ~/.bashrc   # macOS/Linux
+```
+> Persisting it means `ollama` always goes through the proxy — so keep the daemon
+> running (see *Run in the background* below), or `ollama` will fail when it's
+> down. To undo: `Remove-Item Env:OLLAMA_HOST` (PowerShell) / remove the
+> `export` line.
+
+**Common mistakes (all of these break it silently):**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Two *different* answers | redirect not active — calls hit Ollama directly | set `OLLAMA_HOST` to the daemon's port, same terminal |
+| `interactions 0` after calls | traffic never reached the daemon | port in `--port` ≠ port in `OLLAMA_HOST` |
+| `ollama` errors "connection refused" | `OLLAMA_HOST` points at the proxy but the daemon isn't running | start the daemon, or unset `OLLAMA_HOST` |
+| "address already in use" on start | an old daemon is still holding the port | `Get-Process replaykit \| Stop-Process` (or pick another `--port`) |
+
 > **Note:** replaykit captures traffic at the *network* boundary. If a model
 > runs **in the same process** (e.g. `transformers` or `llama-cpp-python` with
 > no HTTP server), there's no wire to record. Run the model as a server
