@@ -1,0 +1,31 @@
+[package]
+name = "replaykit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.replaykit]
+path = ".."
+
+# Each fuzz target is a separate binary. Targets live in `fuzz_targets/`.
+
+[[bin]]
+name = "matcher_compute"
+path = "fuzz_targets/matcher_compute.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "matcher_compare"
+path = "fuzz_targets/matcher_compare.rs"
+test = false
+doc = false
+bench = false

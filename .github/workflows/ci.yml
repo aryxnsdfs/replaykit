@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly fuzz smoke run.
+    - cron: "17 4 * * *"
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,3 +69,33 @@ jobs:
 
       - name: Run end-to-end demo
         run: python examples/run_demo.py
+
+      - name: Run MITM e2e (replay-only against recorded TLS cassette)
+        run: python examples/run_mitm_demo.py
+
+  fuzz:
+    name: fuzz matcher (60s smoke)
+    # On every push/PR we just smoke each target; the nightly cron does the same
+    # job at the same budget but on a schedule, so regressions surface quickly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> target"
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz matcher_compute (60s)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run matcher_compute -- -max_total_time=60
+
+      - name: Fuzz matcher_compare (60s)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run matcher_compare -- -max_total_time=60
