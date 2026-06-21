@@ -37,6 +37,46 @@ pub enum Command {
     Diff(DiffArgs),
     /// Serve the local web dashboard for a cassette.
     Dashboard(DashboardArgs),
+    /// Run a command with the proxy attached. Records on first run, replays after.
+    Run(RunArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct RunArgs {
+    /// Cassette directory. If empty / nonexistent → record mode. If it has
+    /// interactions → replay mode (unless `--record` is passed).
+    #[arg(long)]
+    pub cassette: PathBuf,
+    /// Provider preset: openai | anthropic | google | ollama | vllm | lmstudio | custom.
+    #[arg(long)]
+    pub preset: Option<String>,
+    /// Explicit upstream base URL (overrides preset default).
+    #[arg(long)]
+    pub upstream: Option<String>,
+    /// Force record mode even if cassette already has interactions
+    /// (overwrites the existing cassette).
+    #[arg(long)]
+    pub record: bool,
+    /// Force replay mode (fail if cassette is empty).
+    #[arg(long)]
+    pub replay: bool,
+    /// Divergence policy used in replay mode.
+    #[arg(long, default_value = "fail-fast")]
+    pub on_divergence: String,
+    /// Port to listen on (0 = pick a free port — recommended for `run`).
+    #[arg(long, default_value_t = 0)]
+    pub port: u16,
+    /// Address to bind.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+    /// CA directory (default: ~/.replaykit/ca).
+    #[arg(long)]
+    pub ca_dir: Option<PathBuf>,
+    #[command(flatten)]
+    pub matching: MatchArgs,
+    /// The command to run, followed by its arguments. Use `--` to separate.
+    #[arg(last = true, required = true)]
+    pub cmd: Vec<String>,
 }
 
 #[derive(Args, Debug)]

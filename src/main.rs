@@ -24,6 +24,7 @@ async fn main() {
         Command::Inspect(args) => commands::inspect(args).await,
         Command::Diff(args) => commands::diff(args).await,
         Command::Dashboard(args) => commands::dashboard(args).await,
+        Command::Run(args) => commands::run(args).await,
     };
 
     match result {

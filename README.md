@@ -112,6 +112,22 @@ flowchart LR
 
 ## Quickstart
 
+### Easiest: one command, one shell
+
+```bash
+# Record on first run, replay on every run after.
+replaykit run --cassette runs/today --preset openai -- python my_agent.py
+```
+
+`replaykit run` spawns the proxy on a free port, wires `HTTP_PROXY`,
+`HTTPS_PROXY`, `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `GEMINI_PROXY`,
+`GOOGLE_GENAI_BASE_URL`, and `REPLAYKIT_PROXY` into the child's environment,
+runs your command, then shuts down. No second terminal, no process juggling,
+no PATH tricks. Re-run the same line — second time round it serves from the
+cassette and never touches the network.
+
+Force a fresh recording with `--record`. Force replay with `--replay`.
+
 ### Cloud API (OpenAI, via HTTPS interception)
 
 ```bash
@@ -167,6 +183,7 @@ It records a tiny tool-using agent against a local mock OpenAI server, replays i
 | Command | Description |
 |---|---|
 | `replaykit setup` | Create & trust the local CA (one time). `--ca-dir`, `--force`, `--no-trust`. |
+| `replaykit run --cassette <dir> --preset <p> -- <cmd>` | One-shot wrapper: spawns the proxy, runs `<cmd>` with proxy env wired in, picks record vs replay automatically. |
 | `replaykit record --preset <p> --out <dir>` | Record traffic by forwarding to the real upstream. |
 | `replaykit replay --run <dir>` | Replay a cassette offline. `--on-divergence`, `--preserve-timing`. |
 | `replaykit inspect <dir>` | List interactions with sizes and totals. `--json`. |
@@ -260,11 +277,18 @@ future work.
 
 ### One-liner (prebuilt binary)
 
+**Linux / macOS**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.sh | sh
 ```
 
-Downloads the right prebuilt binary for your OS/arch and puts `replaykit` on your PATH.
+**Windows (PowerShell)**
+```powershell
+irm https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.ps1 | iex
+```
+
+Both download the right prebuilt binary for your OS/arch, drop it into a
+user-writable directory, and add it to your PATH. No admin / sudo required.
 
 ### cargo
 

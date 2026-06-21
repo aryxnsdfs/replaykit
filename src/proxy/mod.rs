@@ -128,6 +128,13 @@ async fn serve_connection(stream: TcpStream, state: Arc<ProxyState>) -> Result<(
     Ok(())
 }
 
+/// Public wrapper around the outer dispatch so other modules (e.g. the
+/// `replaykit run` orchestrator that owns its own accept loop) can serve
+/// connections without duplicating the request-routing layer.
+pub async fn outer_dispatch_pub(req: Request<Incoming>, state: Arc<ProxyState>) -> Resp {
+    outer_dispatch(req, state).await
+}
+
 /// Outer request dispatch (before any TLS interception).
 async fn outer_dispatch(req: Request<Incoming>, state: Arc<ProxyState>) -> Resp {
     if req.method() == Method::CONNECT {

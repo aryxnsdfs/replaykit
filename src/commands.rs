@@ -9,7 +9,7 @@ use owo_colors::OwoColorize;
 use crate::ca::{LocalCa, TrustOutcome};
 use crate::cassette::{CassetteReader, CassetteWriter, Interaction};
 use crate::cli::{
-    DashboardArgs, DiffArgs, InspectArgs, MatchArgs, RecordArgs, ReplayArgs, SetupArgs,
+    DashboardArgs, DiffArgs, InspectArgs, MatchArgs, RecordArgs, ReplayArgs, RunArgs, SetupArgs,
 };
 use crate::config::{default_ca_dir, Preset, Upstream};
 use crate::divergence::DivergencePolicy;
@@ -519,4 +519,284 @@ fn indent(s: &str) -> String {
         .map(|l| format!("  {l}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `replaykit run -- <cmd> [args...]`
+///
+/// One-shot wrapper: spawns the proxy, runs the child command with the proxy
+/// wired into common base-URL and proxy env vars, waits for the child, then
+/// shuts the proxy down cleanly. Picks record vs replay automatically based
+/// on whether the cassette already has interactions.
+pub async fn run(args: RunArgs) -> Result<i32> {
+    if args.record && args.replay {
+        bail!("--record and --replay are mutually exclusive");
+    }
+
+    let cassette_existed = cassette_has_interactions(&args.cassette);
+    let mode = if args.record {
+        RunMode::Record
+    } else if args.replay {
+        if !cassette_existed {
+            bail!(
+                "--replay requested but cassette `{}` has no interactions yet",
+                args.cassette.display()
+            );
+        }
+        RunMode::Replay
+    } else if cassette_existed {
+        RunMode::Replay
+    } else {
+        RunMode::Record
+    };
+
+    let match_config = build_match_config(&args.matching)?;
+    let ca_dir = args.ca_dir.clone().unwrap_or_else(default_ca_dir);
+    let addr: SocketAddr = format!("{}:{}", args.host, args.port)
+        .parse()
+        .context("invalid host/port")?;
+
+    let (state, mode_label, on_finish): (Arc<ProxyState>, &'static str, FinishHook) = match mode {
+        RunMode::Record => build_record_state(&args, &ca_dir, &match_config)?,
+        RunMode::Replay => build_replay_state(&args, &ca_dir, &match_config)?,
+    };
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("binding proxy listener on {addr}"))?;
+    let local = listener.local_addr()?;
+    println!(
+        "  {} {}  {}  {}",
+        "replaykit run".bold(),
+        mode_label.cyan().bold(),
+        "·".dimmed(),
+        format!("proxy http://{local}").dimmed()
+    );
+    println!("  {} {}", "cassette".dimmed(), args.cassette.display());
+    println!("  {} {}", "command ".dimmed(), args.cmd.join(" ").dimmed());
+    println!();
+
+    let serve_state = state.clone();
+    let serve_task = tokio::spawn(async move { serve_on_listener(listener, serve_state).await });
+
+    let proxy_url = format!("http://{local}");
+    let mut cmd = tokio::process::Command::new(&args.cmd[0]);
+    cmd.args(&args.cmd[1..]);
+    cmd.env("HTTP_PROXY", &proxy_url);
+    cmd.env("HTTPS_PROXY", &proxy_url);
+    cmd.env("http_proxy", &proxy_url);
+    cmd.env("https_proxy", &proxy_url);
+    cmd.env("REPLAYKIT_PROXY", &proxy_url);
+    cmd.env("OPENAI_BASE_URL", format!("{proxy_url}/v1"));
+    cmd.env("ANTHROPIC_BASE_URL", &proxy_url);
+    cmd.env("GEMINI_PROXY", &proxy_url);
+    cmd.env("GOOGLE_GENAI_BASE_URL", &proxy_url);
+
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning `{}`", args.cmd[0]))?;
+    let exit = tokio::select! {
+        s = child.wait() => s.context("waiting on child")?,
+        _ = tokio::signal::ctrl_c() => {
+            let _ = child.start_kill();
+            let s = child.wait().await.context("waiting on child after Ctrl-C")?;
+            println!("\n{} child interrupted", "•".dimmed());
+            s
+        }
+    };
+
+    serve_task.abort();
+    let _ = on_finish();
+
+    let code = exit.code().unwrap_or(1);
+    println!(
+        "  {} child exited with status {}",
+        "•".dimmed(),
+        code.to_string().bold()
+    );
+    Ok(code)
+}
+
+type FinishHook = Box<dyn FnOnce() -> i32 + Send>;
+
+enum RunMode {
+    Record,
+    Replay,
+}
+
+fn cassette_has_interactions(dir: &std::path::Path) -> bool {
+    std::fs::metadata(dir.join("interactions.jsonl"))
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
+}
+
+fn build_record_state(
+    args: &RunArgs,
+    ca_dir: &std::path::Path,
+    match_config: &MatchConfig,
+) -> Result<(Arc<ProxyState>, &'static str, FinishHook)> {
+    let (preset, upstream) = resolve_upstream(args.preset.as_deref(), args.upstream.as_deref())?;
+    if args.cassette.exists() {
+        std::fs::remove_dir_all(&args.cassette).with_context(|| {
+            format!("wiping prior cassette at {}", args.cassette.display())
+        })?;
+    }
+    let run_id = args
+        .cassette
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("run")
+        .to_string();
+    let upstream_str = upstream
+        .as_ref()
+        .map(|u| format!("{}://{}:{}", u.scheme, u.host, u.port));
+    let writer = Arc::new(CassetteWriter::create(
+        &args.cassette,
+        run_id,
+        util::now_rfc3339(),
+        upstream_str,
+    )?);
+    writer.finalize()?;
+    let ca = load_ca_optional(ca_dir, preset);
+    let client_tls = crate::ca::upstream_client_config();
+    let engine = Arc::new(RecordEngine::new(
+        writer.clone(),
+        client_tls,
+        match_config.clone(),
+    ));
+    let state = Arc::new(ProxyState {
+        engine: Engine::Record(engine),
+        ca,
+        default_upstream: upstream,
+    });
+    let writer_finalize = writer.clone();
+    let cassette_for_msg = args.cassette.clone();
+    let hook: FinishHook = Box::new(move || {
+        match writer_finalize.finalize() {
+            Ok(manifest) => {
+                println!(
+                    "{} recorded {} interaction(s) → {}",
+                    "✓".green(),
+                    manifest.interaction_count.bold(),
+                    cassette_for_msg.display()
+                );
+                print_storage_summary(manifest.total_logical_bytes, manifest.total_blob_bytes);
+            }
+            Err(e) => eprintln!("warning: finalising cassette: {e:#}"),
+        }
+        0
+    });
+    Ok((state, "RECORD", hook))
+}
+
+fn build_replay_state(
+    args: &RunArgs,
+    ca_dir: &std::path::Path,
+    match_config: &MatchConfig,
+) -> Result<(Arc<ProxyState>, &'static str, FinishHook)> {
+    let policy = DivergencePolicy::parse(&args.on_divergence)
+        .with_context(|| format!("unknown --on-divergence: {}", args.on_divergence))?;
+    let reader = Arc::new(CassetteReader::open(&args.cassette)?);
+    let (preset, upstream) = match (args.preset.as_deref(), args.upstream.as_deref()) {
+        (None, None) => match reader.manifest().default_upstream.as_deref() {
+            Some(u) => (Preset::Custom, Some(Upstream::parse(u)?)),
+            None => (Preset::Custom, None),
+        },
+        (p, u) => resolve_upstream(p, u)?,
+    };
+    let ca = load_ca_optional(ca_dir, preset);
+    let allow_live = matches!(policy, DivergencePolicy::PassthroughLive);
+    let client_tls = if allow_live {
+        Some(crate::ca::upstream_client_config())
+    } else {
+        None
+    };
+    let engine = Arc::new(ReplayEngine::new(
+        reader.clone(),
+        policy,
+        match_config.clone(),
+        false,
+        client_tls,
+        upstream.clone(),
+    ));
+    let state = Arc::new(ProxyState {
+        engine: Engine::Replay(engine.clone()),
+        ca,
+        default_upstream: upstream,
+    });
+    let cassette_for_msg = args.cassette.clone();
+    let hook: FinishHook = Box::new(move || {
+        engine.write_report();
+        let divs = engine.divergences();
+        if divs.is_empty() {
+            println!("{} replay finished with no divergences", "✓".green());
+            0
+        } else {
+            println!(
+                "{} replay finished with {} divergence(s):",
+                "✗".red(),
+                divs.len().bold()
+            );
+            for d in &divs {
+                println!("  {} {}", "•".red(), d.summary);
+            }
+            println!(
+                "  see {}",
+                cassette_for_msg
+                    .join("last-replay.json")
+                    .display()
+                    .to_string()
+                    .dimmed()
+            );
+            if engine.failed() {
+                1
+            } else {
+                0
+            }
+        }
+    });
+    Ok((state, "REPLAY (offline)", hook))
+}
+
+/// Variant of `proxy::serve` that uses an already-bound listener so the caller
+/// knows the local port before the accept loop starts.
+async fn serve_on_listener(
+    listener: tokio::net::TcpListener,
+    state: Arc<ProxyState>,
+) -> Result<()> {
+    use hyper::body::Incoming;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+    use tracing::{debug, warn};
+
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("accept failed: {e}");
+                continue;
+            }
+        };
+        let state = state.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = service_fn(move |req: hyper::Request<Incoming>| {
+                let state = state.clone();
+                async move {
+                    Ok::<_, std::convert::Infallible>(
+                        crate::proxy::outer_dispatch_pub(req, state).await,
+                    )
+                }
+            });
+            if let Err(e) = http1::Builder::new()
+                .preserve_header_case(true)
+                .title_case_headers(true)
+                .serve_connection(io, service)
+                .with_upgrades()
+                .await
+            {
+                debug!("connection from {peer} ended: {e}");
+            }
+        });
+    }
 }
