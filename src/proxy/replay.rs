@@ -312,6 +312,21 @@ impl ReplayEngine {
         }
     }
 
+    /// Serve an interaction value directly (used by the auto/daemon engine,
+    /// which keeps its own live, growing index and may hold interactions that
+    /// were recorded after this engine's reader snapshot was taken). Blobs are
+    /// read fresh from disk, so interactions recorded mid-session serve fine.
+    pub fn serve_interaction(&self, interaction: &Interaction, tier: &str) -> Resp {
+        self.record_outcome(
+            &interaction.keys.endpoint,
+            Some(interaction.step),
+            Some(tier),
+            true,
+            false,
+        );
+        self.build_response(interaction, tier, true)
+    }
+
     /// Build an HTTP response from a recorded interaction, streaming SSE bodies.
     fn build_response(&self, interaction: &Interaction, tier: &str, in_order: bool) -> Resp {
         let status = StatusCode::from_u16(interaction.response.status)

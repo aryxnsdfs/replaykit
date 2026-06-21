@@ -219,7 +219,9 @@ impl CassetteReader {
     }
 }
 
-fn read_interactions(path: &Path) -> Result<Vec<Interaction>> {
+/// Read every interaction from an append-only log. Public so the daemon's auto
+/// engine can re-read the log to pick up interactions recorded mid-session.
+pub fn read_interactions(path: &Path) -> Result<Vec<Interaction>> {
     let file = File::open(path)
         .with_context(|| format!("opening {} — is this a replaykit cassette?", path.display()))?;
     let reader = BufReader::new(file);

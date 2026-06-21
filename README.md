@@ -303,10 +303,9 @@ user-service. One daemon can serve every agent on the machine.
 > start one daemon per project from that project's directory
 > (`--cassette ./.replaykit/auto`), or run separate daemons on different ports.
 >
-> **Session note:** calls first seen *during* a running daemon are recorded once;
-> restart the daemon to also replay them offline (the read snapshot is taken at
-> startup). The common loop — record a run, then replay it across restarts — is
-> fully offline.
+> **No restart needed:** the daemon watches its own log and reloads it as it
+> grows, so a call recorded a moment ago is replayed offline the next time it
+> occurs — within the same running daemon. Just keep working.
 
 ## Readable cassettes
 
