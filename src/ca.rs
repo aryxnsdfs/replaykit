@@ -244,9 +244,23 @@ fn install_ca_trust(cert_path: &Path) -> Result<TrustOutcome> {
 
 /// Build a rustls client config that trusts the real public web PKI, used by
 /// the proxy to connect to upstreams in record mode.
+///
+/// If the `REPLAYKIT_EXTRA_ROOTS` environment variable points at a PEM file,
+/// every CA in that file is appended to the trust store. This is the
+/// recommended hook for integration tests that record against a localhost
+/// TLS mock — it stays narrow (no "disable verification" flag exists) so the
+/// real `record` path stays safe by default.
 pub fn upstream_client_config() -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    if let Ok(path) = std::env::var("REPLAYKIT_EXTRA_ROOTS") {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let mut cursor = std::io::Cursor::new(bytes);
+            for entry in rustls_pemfile::certs(&mut cursor).flatten() {
+                let _ = roots.add(entry);
+            }
+        }
+    }
     let cfg = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
