@@ -4,19 +4,9 @@
 //! the interesting parts. This file just wires up logging and dispatches the
 //! CLI.
 
-mod ca;
-mod cassette;
-mod cli;
-mod commands;
-mod config;
-mod dashboard;
-mod divergence;
-mod matcher;
-mod proxy;
-mod util;
-
 use clap::Parser;
-use cli::{Cli, Command};
+use replaykit::cli::{Cli, Command};
+use replaykit::commands;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]

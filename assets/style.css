@@ -121,3 +121,9 @@ pre.body {
 .divergence-banner pre { margin: 8px 0 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 .divergence-banner .add { color: var(--green); }
 .divergence-banner .del { color: var(--red); }
+
+.metrics { padding: 8px 24px; border-bottom: 1px solid var(--border); background: var(--bg-soft); }
+.metrics-row { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; font-family: var(--mono); }
+.metric { padding: 3px 8px; border-radius: 999px; background: #14302a; color: var(--green); border: 1px solid #1f4a3f; }
+.metric.warn { background: #3a1620; color: var(--red); border-color: #5a2230; }
+.metric em { color: var(--muted); font-style: normal; margin-left: 4px; }

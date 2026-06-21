@@ -23,6 +23,7 @@ use crate::cassette::{CassetteReader, Interaction};
 use crate::config::Upstream;
 use crate::divergence::{Decision, Divergence, DivergenceKind, DivergencePolicy, ReplayCursor};
 use crate::matcher::{self, MatchConfig, RequestView};
+use crate::metrics::{self, MetricsSummary};
 use crate::util;
 
 const HOP_BY_HOP: &[&str] = &[
@@ -57,6 +58,9 @@ pub struct ReplayReport {
     pub divergence_count: usize,
     pub divergences: Vec<Divergence>,
     pub outcomes: Vec<StepOutcome>,
+    /// Aggregate counters derived from `outcomes` + `divergences` for the
+    /// dashboard / CI gating.
+    pub metrics: MetricsSummary,
 }
 
 struct ReplayState {
@@ -117,6 +121,7 @@ impl ReplayEngine {
     /// Snapshot the current report.
     pub fn report(&self) -> ReplayReport {
         let st = self.state.lock().unwrap();
+        let metrics = metrics::summarize(&st.outcomes, &st.divergences);
         ReplayReport {
             run_id: self.reader.manifest().run_id.clone(),
             policy: format!("{:?}", self.policy),
@@ -125,6 +130,7 @@ impl ReplayEngine {
             divergence_count: st.divergences.len(),
             divergences: st.divergences.clone(),
             outcomes: st.outcomes.clone(),
+            metrics,
         }
     }
 

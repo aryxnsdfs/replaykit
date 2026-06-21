@@ -12,7 +12,11 @@ license = "MIT"
 readme = "README.md"
 keywords = ["ai", "agents", "record-replay", "proxy", "determinism"]
 categories = ["command-line-utilities", "development-tools", "web-programming"]
-exclude = ["runs/", "examples/runs/", ".github/", "assets/screenshots/"]
+exclude = ["runs/", "examples/runs/", ".github/", "assets/screenshots/", "fuzz/"]
+
+[lib]
+name = "replaykit"
+path = "src/lib.rs"
 
 [[bin]]
 name = "replaykit"

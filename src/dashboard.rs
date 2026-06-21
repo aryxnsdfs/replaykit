@@ -81,6 +81,7 @@ async fn route(req: Request<Incoming>, reader: Arc<CassetteReader>) -> Resp {
     match path.as_str() {
         "/" | "/index.html" => asset("index.html"),
         "/api/run" => api_run(&reader),
+        "/api/metrics" => api_metrics(&reader),
         p if p.starts_with("/api/interaction/") => {
             let step = p
                 .trim_start_matches("/api/interaction/")
@@ -145,6 +146,17 @@ fn summarize(i: &Interaction) -> InteractionSummary {
         timestamp: i.timestamp.clone(),
         duration_ms: i.duration_ms,
     }
+}
+
+fn api_metrics(reader: &CassetteReader) -> Resp {
+    let report = std::fs::read_to_string(reader.root().join("last-replay.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let metrics = report
+        .as_ref()
+        .and_then(|r| r.get("metrics").cloned())
+        .unwrap_or_else(|| json!({"steps_total": 0}));
+    json_response(StatusCode::OK, &metrics)
 }
 
 fn api_run(reader: &CassetteReader) -> Resp {

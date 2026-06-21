@@ -13,7 +13,29 @@ async function boot() {
   state.report = data.report || null;
   indexDivergences();
   renderSummary(data.manifest);
+  renderMetrics(state.report && state.report.metrics);
   renderList();
+}
+
+function renderMetrics(m) {
+  const host = document.getElementById("metrics");
+  if (!host) return;
+  if (!m || !m.steps_total) { host.innerHTML = ""; return; }
+  const tiers = Object.entries(m.tier_hits || {})
+    .map(([k, v]) => `<span class="metric"><b>${v}</b> ${k} <em>(${Math.round((m.tier_hit_rate?.[k] || 0) * 100)}%)</em></span>`)
+    .join("");
+  const reasons = Object.entries(m.divergence_reasons || {})
+    .map(([k, v]) => `<span class="metric warn"><b>${v}</b> ${k.replace(/_/g, " ")}</span>`)
+    .join("");
+  host.innerHTML = `
+    <div class="metrics-row">
+      <span class="metric"><b>${m.steps_total}</b> total</span>
+      <span class="metric"><b>${m.steps_served}</b> served</span>
+      <span class="metric warn"><b>${m.steps_diverged}</b> diverged</span>
+      <span class="metric warn"><b>${m.steps_out_of_order}</b> out-of-order</span>
+      ${tiers}
+      ${reasons}
+    </div>`;
 }
 
 function indexDivergences() {

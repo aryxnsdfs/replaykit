@@ -47,6 +47,16 @@ pub enum DivergenceKind {
     },
 }
 
+impl DivergenceKind {
+    /// Stable short label used by metrics grouping and dashboard UI.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            DivergenceKind::NoMatch => "no_match",
+            DivergenceKind::OutOfOrder { .. } => "out_of_order",
+        }
+    }
+}
+
 /// A reported divergence, suitable for CLI, dashboard and JSON output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Divergence {
