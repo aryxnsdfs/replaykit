@@ -289,6 +289,26 @@ impl ReplayEngine {
         });
     }
 
+    /// Serve a specific recorded interaction by index (used by the auto/daemon
+    /// engine, which does its own stateless matching). Reuses the exact same
+    /// response construction as ordinary replay, including SSE streaming.
+    pub fn serve_recorded(&self, index: usize, tier: &str) -> Resp {
+        let interactions = self.reader.interactions();
+        match interactions.get(index) {
+            Some(interaction) => {
+                self.record_outcome(
+                    &interaction.keys.endpoint,
+                    Some(interaction.step),
+                    Some(tier),
+                    true,
+                    false,
+                );
+                self.build_response(interaction, tier, true)
+            }
+            None => error_response(StatusCode::INTERNAL_SERVER_ERROR, "recorded step out of range"),
+        }
+    }
+
     /// Build an HTTP response from a recorded interaction, streaming SSE bodies.
     fn build_response(&self, interaction: &Interaction, tier: &str, in_order: bool) -> Resp {
         let status = StatusCode::from_u16(interaction.response.status)

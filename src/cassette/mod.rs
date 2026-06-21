@@ -81,6 +81,19 @@ impl CassetteWriter {
         &self.store
     }
 
+    /// Seed the step counter and interaction count so a reopened cassette
+    /// (e.g. the daemon appending to an existing run) continues numbering after
+    /// the interactions already on disk instead of colliding from zero.
+    pub fn seed_from_existing(&self, existing: usize) {
+        let mut inner = self.inner.lock().unwrap();
+        if existing > inner.next_step {
+            inner.next_step = existing;
+        }
+        if existing > inner.interaction_count {
+            inner.interaction_count = existing;
+        }
+    }
+
     /// Reserve the next step index. Steps are handed out in request order so the
     /// recording stays ordered even under concurrent connections.
     pub fn next_step(&self) -> usize {

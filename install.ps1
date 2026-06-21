@@ -53,7 +53,10 @@ if (-not ($userPath -split ";" | Where-Object { $_ -ieq $InstallDir })) {
     Write-Host "  adding $InstallDir to user PATH ..." -ForegroundColor DarkGray
     $newPath = if ([string]::IsNullOrEmpty($userPath)) { $InstallDir } else { "$InstallDir;$userPath" }
     [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    # Also patch the current session so the user can run it immediately.
+}
+# Always patch the *current* session so `replaykit` works right now, even if the
+# directory was already on the persistent PATH but not in this shell's env.
+if (-not ($env:Path -split ";" | Where-Object { $_ -ieq $InstallDir })) {
     $env:Path = "$InstallDir;$env:Path"
 }
 
@@ -63,7 +66,14 @@ Write-Host ""
 Write-Host "  installed: $version" -ForegroundColor Green
 Write-Host "  binary   : $exe" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  Open a new terminal (or restart your shell) so PATH picks up,"
-Write-Host "  then try:"
-Write-Host "    replaykit run --cassette runs/demo --preset google -- python agent.py" -ForegroundColor Cyan
+Write-Host "  Ready to use in THIS terminal now. For new terminals, PATH is"
+Write-Host "  already set (just open a fresh window)."
+Write-Host ""
+Write-Host "  Quick start:" -ForegroundColor Cyan
+Write-Host "    replaykit run --cassette runs/demo --preset openai -- python agent.py"
+Write-Host ""
+Write-Host "  Run it in the background (records new calls, replays known ones):" -ForegroundColor Cyan
+Write-Host "    Start-Process replaykit -ArgumentList 'daemon','--preset','openai','--cassette','runs/auto' -WindowStyle Hidden"
+Write-Host ""
+Write-Host "  Verify it is on PATH:  Get-Command replaykit"
 Write-Host ""

@@ -259,6 +259,70 @@ divergence reasons, per-step outcomes). Browse it visually:
 replaykit dashboard --run runs/<name>
 ```
 
+## Run in the background (daemon)
+
+`replaykit run` wraps a single command. The **daemon** is the always-on version:
+start it once, then code and run your agents normally — no special command, no
+wrapper. Known calls are served offline; brand-new calls are forwarded live and
+**recorded on the fly**, so the cassette grows as you work.
+
+```bash
+# Start it (foreground). Point your agents at it as usual.
+replaykit daemon --preset openai --cassette runs/auto --port 8080
+```
+
+Then in your normal shell/editor, run agents exactly as you always do — just
+make sure they reach the proxy (set once in your shell profile, or per project):
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8080/v1   # or HTTPS_PROXY=http://localhost:8080
+python my_agent.py        # 1st time: records new calls. Next time: served offline.
+```
+
+### Start it detached (truly in the background)
+
+**Windows (PowerShell)**
+```powershell
+Start-Process replaykit -ArgumentList 'daemon','--preset','openai','--cassette','runs/auto' -WindowStyle Hidden
+# stop it later:
+Get-Process replaykit | Stop-Process
+```
+
+**macOS / Linux**
+```bash
+nohup replaykit daemon --preset openai --cassette runs/auto --port 8080 >/tmp/replaykit.log 2>&1 &
+echo $!   # PID; kill it later with: kill <PID>
+```
+
+**Run at login (optional):** drop the same command into a Windows *Startup*
+shortcut / Task Scheduler task, a macOS LaunchAgent, or a Linux systemd
+user-service. One daemon can serve every agent on the machine.
+
+> **How it picks a cassette:** a network proxy can't see your project folder, so
+> the cassette is whatever you pass to `--cassette`. For per-project isolation,
+> start one daemon per project from that project's directory
+> (`--cassette ./.replaykit/auto`), or run separate daemons on different ports.
+>
+> **Session note:** calls first seen *during* a running daemon are recorded once;
+> restart the daemon to also replay them offline (the read snapshot is taken at
+> startup). The common loop — record a run, then replay it across restarts — is
+> fully offline.
+
+## Readable cassettes
+
+Cassettes are stored compressed and content-addressed (not meant to be read by
+hand). To get a clean, human-readable copy — decoded request/response bodies as
+pretty JSON, one file per step, plus an index:
+
+```bash
+replaykit export runs/auto                 # writes runs/auto/readable/
+replaykit export runs/auto --markdown      # also a transcript.md you can skim
+```
+
+`readable/index.json` lists every interaction; `readable/0000.json`,
+`0001.json`, … hold the full decoded request and response for each step.
+For an interactive view instead, use `replaykit dashboard --run runs/auto`.
+
 ## Manual record / replay (two-step, full control)
 
 `run` is the easy path. If you want the proxy and the agent in separate shells

@@ -39,6 +39,50 @@ pub enum Command {
     Dashboard(DashboardArgs),
     /// Run a command with the proxy attached. Records on first run, replays after.
     Run(RunArgs),
+    /// Export a cassette to human-readable files (decoded JSON / Markdown).
+    Export(ExportArgs),
+    /// Persistent background proxy: replay known calls, record new ones.
+    Daemon(DaemonArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct DaemonArgs {
+    /// Provider preset: openai | anthropic | google | ollama | vllm | lmstudio | custom.
+    #[arg(long)]
+    pub preset: Option<String>,
+    /// Explicit upstream base URL (required for `--preset custom`).
+    #[arg(long)]
+    pub upstream: Option<String>,
+    /// Cassette directory. Created if it does not exist; grows as new calls
+    /// are seen. Known calls are served offline.
+    #[arg(long)]
+    pub cassette: PathBuf,
+    /// Port to listen on.
+    #[arg(long, default_value_t = 8080)]
+    pub port: u16,
+    /// Address to bind.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+    /// CA directory (default: ~/.replaykit/ca).
+    #[arg(long)]
+    pub ca_dir: Option<PathBuf>,
+    /// Replay recorded SSE streams with their original inter-chunk delays.
+    #[arg(long)]
+    pub preserve_timing: bool,
+    #[command(flatten)]
+    pub matching: MatchArgs,
+}
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    /// Cassette directory to export.
+    pub run: PathBuf,
+    /// Output directory (default: `<run>/readable`).
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    /// Also write a Markdown transcript (`transcript.md`).
+    #[arg(long)]
+    pub markdown: bool,
 }
 
 #[derive(Args, Debug)]

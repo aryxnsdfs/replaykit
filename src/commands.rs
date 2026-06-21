@@ -9,12 +9,15 @@ use owo_colors::OwoColorize;
 use crate::ca::{LocalCa, TrustOutcome};
 use crate::cassette::{CassetteReader, CassetteWriter, Interaction};
 use crate::cli::{
-    DashboardArgs, DiffArgs, InspectArgs, MatchArgs, RecordArgs, ReplayArgs, RunArgs, SetupArgs,
+    DaemonArgs, DashboardArgs, DiffArgs, ExportArgs, InspectArgs, MatchArgs, RecordArgs, ReplayArgs,
+    RunArgs, SetupArgs,
 };
 use crate::config::{default_ca_dir, Preset, Upstream};
 use crate::divergence::DivergencePolicy;
 use crate::matcher::{MatchConfig, Tier};
-use crate::proxy::{self, record::RecordEngine, replay::ReplayEngine, Engine, ProxyState};
+use crate::proxy::{
+    self, auto::AutoEngine, record::RecordEngine, replay::ReplayEngine, Engine, ProxyState,
+};
 use crate::{dashboard, util};
 
 /// `replaykit setup`
@@ -223,6 +226,91 @@ pub async fn replay(args: ReplayArgs) -> Result<i32> {
     }
 }
 
+/// `replaykit daemon` — persistent hybrid proxy (replay known, record new).
+pub async fn daemon(args: DaemonArgs) -> Result<i32> {
+    let (preset, upstream) = resolve_upstream(args.preset.as_deref(), args.upstream.as_deref())?;
+    let match_config = build_match_config(&args.matching)?;
+    let ca_dir = args.ca_dir.unwrap_or_else(default_ca_dir);
+    let addr: SocketAddr = format!("{}:{}", args.host, args.port)
+        .parse()
+        .context("invalid host/port")?;
+
+    let run_id = args
+        .cassette
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("auto")
+        .to_string();
+    let upstream_str = upstream
+        .as_ref()
+        .map(|u| format!("{}://{}:{}", u.scheme, u.host, u.port));
+
+    // Open or create the cassette for appending, and snapshot what's already in
+    // it for the replay (read) side.
+    let writer = Arc::new(CassetteWriter::create(
+        &args.cassette,
+        run_id,
+        util::now_rfc3339(),
+        upstream_str,
+    )?);
+    writer.finalize()?;
+    let reader = Arc::new(CassetteReader::open(&args.cassette)?);
+    let known = reader.interactions().len();
+    writer.seed_from_existing(known);
+
+    let ca = load_ca_optional(&ca_dir, preset);
+    let client_tls = crate::ca::upstream_client_config();
+
+    let record_engine = Arc::new(RecordEngine::new(
+        writer.clone(),
+        client_tls,
+        match_config.clone(),
+    ));
+    let replay_engine = Arc::new(ReplayEngine::new(
+        reader.clone(),
+        DivergencePolicy::FailFast, // unused by the auto path; it only serves hits
+        match_config.clone(),
+        args.preserve_timing,
+        None,
+        upstream.clone(),
+    ));
+    let auto = Arc::new(AutoEngine::new(
+        reader.clone(),
+        replay_engine,
+        record_engine,
+        match_config.clone(),
+    ));
+    let state = Arc::new(ProxyState {
+        engine: Engine::Auto(auto),
+        ca: ca.clone(),
+        default_upstream: upstream.clone(),
+    });
+
+    let cassette_display = args.cassette.display().to_string();
+    let writer_for_finalize = writer.clone();
+    tokio::select! {
+        r = proxy::serve(addr, state, |local| {
+            print_banner("DAEMON (auto)", local, preset, upstream.as_ref(), ca.is_some(), &match_config);
+            println!("  {} {}  ({} known interactions)", "cassette ⇄".dimmed(), cassette_display.cyan(), known);
+            println!("  {} known calls served offline · new calls forwarded live + recorded", "mode".dimmed());
+            println!("\n  Running in the background. Use your agents normally. Press {} to stop.\n", "Ctrl-C".bold());
+        }) => { r?; }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n{} finalising cassette…", "•".dimmed());
+        }
+    }
+
+    let manifest = writer_for_finalize.finalize()?;
+    println!(
+        "{} cassette now holds {} interaction(s) → {}",
+        "✓".green(),
+        manifest.interaction_count.bold(),
+        args.cassette.display()
+    );
+    print_storage_summary(manifest.total_logical_bytes, manifest.total_blob_bytes);
+    Ok(0)
+}
+
 /// `replaykit inspect`
 pub async fn inspect(args: InspectArgs) -> Result<i32> {
     let reader = CassetteReader::open(&args.run)?;
@@ -354,6 +442,134 @@ pub async fn diff(args: DiffArgs) -> Result<i32> {
         &interaction.keys.structural[..16.min(interaction.keys.structural.len())]
     );
     Ok(0)
+}
+
+/// `replaykit export` — write a cassette out as human-readable files.
+pub async fn export(args: ExportArgs) -> Result<i32> {
+    let reader = CassetteReader::open(&args.run)?;
+    let out_dir = args.out.unwrap_or_else(|| args.run.join("readable"));
+    std::fs::create_dir_all(&out_dir)
+        .with_context(|| format!("creating {}", out_dir.display()))?;
+
+    let manifest = reader.manifest();
+    let mut index = Vec::new();
+
+    for i in reader.interactions() {
+        let req_body = reader.request_body(i).unwrap_or_default();
+        let resp_body = reader.response_body(i).unwrap_or_default();
+        let entry = serde_json::json!({
+            "step": i.step,
+            "timestamp": i.timestamp,
+            "duration_ms": i.duration_ms,
+            "request": {
+                "method": i.request.method,
+                "url": i.request.url,
+                "headers": headers_to_json(&i.request.headers),
+                "body": body_to_json(&req_body),
+            },
+            "response": {
+                "status": i.response.status,
+                "stream": i.response.stream,
+                "headers": headers_to_json(&i.response.headers),
+                "body": body_to_json(&resp_body),
+            },
+            "match_keys": {
+                "endpoint": i.keys.endpoint,
+            },
+        });
+        let fname = format!("{:04}.json", i.step);
+        std::fs::write(out_dir.join(&fname), serde_json::to_string_pretty(&entry)?)
+            .with_context(|| format!("writing {fname}"))?;
+        index.push(serde_json::json!({
+            "step": i.step,
+            "endpoint": i.keys.endpoint,
+            "status": i.response.status,
+            "file": fname,
+        }));
+    }
+
+    let summary = serde_json::json!({
+        "run_id": manifest.run_id,
+        "recorded": manifest.created_utc,
+        "tool_version": manifest.tool_version,
+        "providers": manifest.providers,
+        "interaction_count": manifest.interaction_count,
+        "interactions": index,
+    });
+    std::fs::write(
+        out_dir.join("index.json"),
+        serde_json::to_string_pretty(&summary)?,
+    )?;
+
+    if args.markdown {
+        let md = render_markdown_transcript(&reader);
+        std::fs::write(out_dir.join("transcript.md"), md)?;
+    }
+
+    println!(
+        "{} exported {} interaction(s) → {}",
+        "✓".green(),
+        manifest.interaction_count.bold(),
+        out_dir.display()
+    );
+    println!(
+        "  {} {}",
+        "open".dimmed(),
+        out_dir.join("index.json").display().to_string().cyan()
+    );
+    Ok(0)
+}
+
+/// Parse a recorded body as JSON for nested rendering; fall back to a string.
+fn body_to_json(body: &[u8]) -> serde_json::Value {
+    if body.is_empty() {
+        return serde_json::Value::Null;
+    }
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(v) => v,
+        Err(_) => serde_json::Value::String(String::from_utf8_lossy(body).to_string()),
+    }
+}
+
+fn headers_to_json(headers: &[crate::cassette::Header]) -> serde_json::Value {
+    let map: serde_json::Map<String, serde_json::Value> = headers
+        .iter()
+        .map(|h| {
+            (
+                h.name.clone(),
+                serde_json::Value::String(redact(&h.name, &h.value)),
+            )
+        })
+        .collect();
+    serde_json::Value::Object(map)
+}
+
+fn render_markdown_transcript(reader: &CassetteReader) -> String {
+    let m = reader.manifest();
+    let mut out = String::new();
+    out.push_str(&format!("# replaykit transcript — {}\n\n", m.run_id));
+    out.push_str(&format!(
+        "Recorded {} · {} interactions · providers: {}\n\n",
+        m.created_utc,
+        m.interaction_count,
+        m.providers.join(", ")
+    ));
+    for i in reader.interactions() {
+        let req_body = reader.request_body(i).unwrap_or_default();
+        let resp_body = reader.response_body(i).unwrap_or_default();
+        out.push_str(&format!(
+            "## Step {} — {} {}\n\n",
+            i.step, i.request.method, i.keys.endpoint
+        ));
+        out.push_str(&format!("**Status:** {}\n\n", i.response.status));
+        out.push_str("**Request body:**\n\n```json\n");
+        out.push_str(&util::pretty_json_or_text(&req_body));
+        out.push_str("\n```\n\n");
+        out.push_str("**Response body:**\n\n```json\n");
+        out.push_str(&util::pretty_json_or_text(&resp_body));
+        out.push_str("\n```\n\n");
+    }
+    out
 }
 
 /// `replaykit dashboard`

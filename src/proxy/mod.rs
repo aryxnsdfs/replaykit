@@ -12,6 +12,7 @@
 //! In every case the same [`handle`] path runs: reconstruct the full request,
 //! hand it to the active [`Engine`] (record or replay), and return the response.
 
+pub mod auto;
 pub mod record;
 pub mod replay;
 
@@ -33,6 +34,7 @@ use tracing::{debug, error, warn};
 
 use crate::ca::LocalCa;
 use crate::config::Upstream;
+use auto::AutoEngine;
 use record::RecordEngine;
 use replay::ReplayEngine;
 
@@ -47,6 +49,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 pub enum Engine {
     Record(Arc<RecordEngine>),
     Replay(Arc<ReplayEngine>),
+    /// Persistent hybrid (daemon): replay known calls, record new ones.
+    Auto(Arc<AutoEngine>),
 }
 
 /// Everything a connection task needs, shared behind an `Arc`.
@@ -270,6 +274,7 @@ async fn handle(req: Request<Incoming>, target: Target, state: Arc<ProxyState>) 
             }
         },
         Engine::Replay(rep) => rep.handle(captured).await,
+        Engine::Auto(auto) => auto.handle(captured).await,
     }
 }
 
