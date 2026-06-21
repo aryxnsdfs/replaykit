@@ -619,9 +619,10 @@ enum RunMode {
 }
 
 fn cassette_has_interactions(dir: &std::path::Path) -> bool {
-    std::fs::metadata(dir.join("interactions.jsonl"))
-        .map(|m| m.len() > 0)
-        .unwrap_or(false)
+    match std::fs::metadata(dir.join("interactions.jsonl")) {
+        Ok(m) => m.len() > 0,
+        Err(_) => false,
+    }
 }
 
 fn build_record_state(
@@ -631,9 +632,8 @@ fn build_record_state(
 ) -> Result<(Arc<ProxyState>, &'static str, FinishHook)> {
     let (preset, upstream) = resolve_upstream(args.preset.as_deref(), args.upstream.as_deref())?;
     if args.cassette.exists() {
-        std::fs::remove_dir_all(&args.cassette).with_context(|| {
-            format!("wiping prior cassette at {}", args.cassette.display())
-        })?;
+        std::fs::remove_dir_all(&args.cassette)
+            .with_context(|| format!("wiping prior cassette at {}", args.cassette.display()))?;
     }
     let run_id = args
         .cassette
