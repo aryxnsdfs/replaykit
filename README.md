@@ -498,22 +498,42 @@ irm https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.ps1 | iex
 Both download the right prebuilt binary for your OS/arch, drop it into a
 user-writable directory, and add it to your PATH. No admin / sudo required.
 
-### cargo
+Prebuilt binaries for Linux, macOS (x86_64 + arm64) and Windows (x86_64) are
+attached to every [GitHub Release](https://github.com/aryxnsdfs/replaykit/releases).
+**This is the recommended path — no Rust or compiler needed.**
+
+### Build it yourself (Rust)
+
+Only needed if you want to modify the source, or you're on a platform with no
+prebuilt binary. The result is the *same* binary the release ships — building
+locally just compiles it on your machine.
+
+**Prerequisites: a Rust toolchain *and* a C linker.**
+
+- **Rust** (all platforms): install via [rustup](https://rustup.rs) —
+  `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+  (Windows: `winget install Rustlang.Rustup`). Then `rustup component add rustfmt clippy`.
+- **C linker:**
+  - **Linux** — `gcc` (e.g. `sudo apt install build-essential`).
+  - **macOS** — Xcode Command Line Tools (`xcode-select --install`).
+  - **Windows** — Visual Studio 2022 Build Tools with the *"Desktop development
+    with C++"* workload (`winget install Microsoft.VisualStudio.2022.BuildTools`).
 
 ```bash
-cargo install replaykit
-```
+# install straight from git (no clone):
+cargo install --git https://github.com/aryxnsdfs/replaykit
 
-### From source
-
-```bash
+# …or clone and build:
 git clone https://github.com/aryxnsdfs/replaykit
 cd replaykit
 cargo build --release      # binary at target/release/replaykit
 ```
 
-Prebuilt binaries for Linux and macOS (x86_64 + arm64) are attached to every
-[GitHub Release](https://github.com/aryxnsdfs/replaykit/releases).
+> **Windows linker gotcha:** the MSVC environment isn't always on `PATH`, so a
+> plain `cargo build` can fail with *"linker `link.exe` not found"*. Fix: run
+> cargo from the **"x64 Native Tools Command Prompt for VS 2022"** (it loads the
+> environment), or create a one-line wrapper that calls `vcvars64.bat` before
+> `cargo`. The prebuilt binary sidesteps all of this.
 
 ## FAQ
 
