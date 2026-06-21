@@ -305,7 +305,10 @@ impl ReplayEngine {
                 );
                 self.build_response(interaction, tier, true)
             }
-            None => error_response(StatusCode::INTERNAL_SERVER_ERROR, "recorded step out of range"),
+            None => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "recorded step out of range",
+            ),
         }
     }
 

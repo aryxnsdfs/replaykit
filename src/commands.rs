@@ -9,8 +9,8 @@ use owo_colors::OwoColorize;
 use crate::ca::{LocalCa, TrustOutcome};
 use crate::cassette::{CassetteReader, CassetteWriter, Interaction};
 use crate::cli::{
-    DaemonArgs, DashboardArgs, DiffArgs, ExportArgs, InspectArgs, MatchArgs, RecordArgs, ReplayArgs,
-    RunArgs, SetupArgs,
+    DaemonArgs, DashboardArgs, DiffArgs, ExportArgs, InspectArgs, MatchArgs, RecordArgs,
+    ReplayArgs, RunArgs, SetupArgs,
 };
 use crate::config::{default_ca_dir, Preset, Upstream};
 use crate::divergence::DivergencePolicy;
@@ -448,8 +448,7 @@ pub async fn diff(args: DiffArgs) -> Result<i32> {
 pub async fn export(args: ExportArgs) -> Result<i32> {
     let reader = CassetteReader::open(&args.run)?;
     let out_dir = args.out.unwrap_or_else(|| args.run.join("readable"));
-    std::fs::create_dir_all(&out_dir)
-        .with_context(|| format!("creating {}", out_dir.display()))?;
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
 
     let manifest = reader.manifest();
     let mut index = Vec::new();

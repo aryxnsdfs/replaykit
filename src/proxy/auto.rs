@@ -84,7 +84,10 @@ impl AutoEngine {
         }
 
         // Miss: forward live + record so the cassette grows.
-        debug!("auto: miss for {} — forwarding live + recording", keys.endpoint);
+        debug!(
+            "auto: miss for {} — forwarding live + recording",
+            keys.endpoint
+        );
         match self.record.handle(captured).await {
             Ok(resp) => resp,
             Err(e) => {
