@@ -54,9 +54,7 @@ impl AutoEngine {
         match_config: MatchConfig,
     ) -> Self {
         let jsonl_path = reader.root().join(INTERACTIONS_FILE);
-        let file_len = std::fs::metadata(&jsonl_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let file_len = std::fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0);
         let index = Mutex::new(IndexState {
             interactions: reader.interactions().to_vec(),
             file_len,
@@ -73,9 +71,7 @@ impl AutoEngine {
     /// Reload the interaction log if it has grown since we last read it, so
     /// interactions recorded during this daemon session become matchable.
     fn refresh_if_grown(&self) {
-        let cur_len = std::fs::metadata(&self.jsonl_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let cur_len = std::fs::metadata(&self.jsonl_path).map(|m| m.len()).unwrap_or(0);
         let mut st = self.index.lock().unwrap();
         if cur_len > st.file_len {
             match cassette::read_interactions(&self.jsonl_path) {
