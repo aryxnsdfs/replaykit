@@ -30,6 +30,20 @@ and debuggable**.
                  cassette                                  same inputs → same bug
 ```
 
+## 30-second start
+
+```bash
+# 1. Install (Linux/macOS). Windows: see Installation below.
+curl -fsSL https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.sh | sh
+
+# 2. Run your agent through it. Records the first time, replays offline after.
+replaykit run --cassette runs/demo --preset openai -- python my_agent.py
+```
+
+That's the whole loop. Swap `--preset openai` for `anthropic`, `google`,
+`ollama`, `vllm`, or `lmstudio`; swap the command for whatever launches your
+agent. [Recipes for every provider below.](#run-any-agent)
+
 ## The problem
 
 AI agents are non-deterministic: the same task gives a different result every run, because the
@@ -128,6 +142,128 @@ cassette and never touches the network.
 
 Force a fresh recording with `--record`. Force replay with `--replay`.
 
+## Run *any* agent
+
+replaykit is provider-agnostic. It sits on the network boundary, so **any agent
+that makes HTTP(S) calls works** — OpenAI, Anthropic, Gemini, local model
+servers (Ollama / vLLM / LM Studio), tool APIs, or your own custom client.
+Frameworks (LangChain, LlamaIndex, CrewAI, AutoGen, raw SDK) don't matter:
+they all speak HTTP underneath.
+
+The pattern is always the same:
+
+```bash
+replaykit run --cassette runs/<name> --preset <provider> -- <your agent command>
+```
+
+First run records against the real provider; every run after replays offline.
+`<your agent command>` is whatever you'd normally type — `python app.py`,
+`node agent.js`, `./my-agent`, etc.
+
+### OpenAI
+
+```bash
+replaykit run --cassette runs/openai --preset openai -- python my_agent.py
+```
+Your agent reads `OPENAI_BASE_URL` (the official SDK does) — `run` sets it to
+the proxy automatically. No code change.
+
+### Anthropic (Claude)
+
+```bash
+replaykit run --cassette runs/claude --preset anthropic -- python my_agent.py
+```
+Sets `ANTHROPIC_BASE_URL`. Works with the `anthropic` SDK out of the box.
+
+### Google Gemini
+
+```bash
+replaykit run --cassette runs/gemini --preset google -- python my_agent.py
+```
+If your code reads `GEMINI_PROXY` / `GOOGLE_GENAI_BASE_URL`, it's wired
+automatically. With the official `google-genai` SDK, point its `base_url`/
+`http_options` at `$REPLAYKIT_PROXY` (also exported by `run`).
+
+### Local models — Ollama / vLLM / LM Studio (no API key, no CA)
+
+Local servers speak plain HTTP, so there's no TLS to intercept and no CA to
+install. This is the easiest path of all:
+
+```bash
+# Ollama (default http://localhost:11434)
+replaykit run --cassette runs/ollama --preset ollama -- python my_agent.py
+
+# vLLM (default http://localhost:8000)
+replaykit run --cassette runs/vllm --preset vllm -- python my_agent.py
+
+# LM Studio (default http://localhost:1234)
+replaykit run --cassette runs/lmstudio --preset lmstudio -- python my_agent.py
+```
+
+vLLM and LM Studio expose an OpenAI-compatible API, so most OpenAI agents work
+unchanged — just point the SDK's `base_url` at the proxy (`$REPLAYKIT_PROXY`)
+or rely on the `OPENAI_BASE_URL` that `run` exports.
+
+> **Note:** replaykit captures traffic at the *network* boundary. If a model
+> runs **in the same process** (e.g. `transformers` or `llama-cpp-python` with
+> no HTTP server), there's no wire to record. Run the model as a server
+> (Ollama/vLLM/LM Studio all do this) and point your agent at it.
+
+### Custom / self-hosted endpoint
+
+No preset? Give the upstream directly:
+
+```bash
+replaykit run --cassette runs/custom --upstream https://my-llm.example.com -- python my_agent.py
+```
+
+### Making your agent talk to the proxy
+
+`run` exports these into your command's environment — most SDKs pick one up
+with **zero code change**:
+
+| Env var | Used by |
+|---|---|
+| `OPENAI_BASE_URL` | OpenAI SDK, vLLM, LM Studio, most OpenAI-compatible clients |
+| `ANTHROPIC_BASE_URL` | Anthropic SDK |
+| `GEMINI_PROXY`, `GOOGLE_GENAI_BASE_URL` | Gemini agents |
+| `HTTP_PROXY` / `HTTPS_PROXY` | anything that respects proxy env (requests, httpx, curl, Go, Node) |
+| `REPLAYKIT_PROXY` | read it yourself if your client needs an explicit base URL |
+
+If your client ignores all of these, read `REPLAYKIT_PROXY` in your code and
+pass it as the `base_url`. Example (Gemini):
+
+```python
+import os
+from google import genai
+client = genai.Client(
+    api_key=os.environ["GEMINI_KEY"],
+    http_options={"base_url": os.environ.get("REPLAYKIT_PROXY")},
+)
+```
+
+### Verify a replay worked
+
+On replay, every response carries headers you can assert on:
+
+```
+x-replaykit-mode:  replay      # served from disk, not the network
+x-replaykit-tier:  exact       # how it matched (exact/normalized/structural/similarity)
+x-replaykit-step:  0           # which recorded interaction was served
+```
+
+And the full report lands at `runs/<name>/last-replay.json` (tier hit rates,
+divergence reasons, per-step outcomes). Browse it visually:
+
+```bash
+replaykit dashboard --run runs/<name>
+```
+
+## Manual record / replay (two-step, full control)
+
+`run` is the easy path. If you want the proxy and the agent in separate shells
+(e.g. to hit it with many different commands), use `record` / `replay` directly.
+
 ### Cloud API (OpenAI, via HTTPS interception)
 
 ```bash
@@ -167,16 +303,24 @@ replaykit record --preset openai --out ./runs/today --port 8080
 #   OPENAI_BASE_URL=http://localhost:8080/v1   python my_agent.py
 ```
 
-### Try the bundled demo (no API key, fully offline)
+### Try the bundled demos (no API key, fully offline)
 
 ```bash
 cargo build --release
 pip install -r examples/requirements.txt
+
+# HTTP reverse-proxy demo: record → offline replay → divergence.
 python examples/run_demo.py
+
+# HTTPS MITM demo: CONNECT + TLS interception, recorded then replayed offline.
+python examples/run_mitm_demo.py
 ```
 
-It records a tiny tool-using agent against a local mock OpenAI server, replays it with the mock
-**off**, asserts the output is byte-identical, then forces a divergence and shows it being caught.
+`run_demo.py` records a tiny tool-using agent against a local mock OpenAI
+server, replays it with the mock **off**, asserts the output is byte-identical,
+then forces a divergence and shows it being caught. `run_mitm_demo.py` does the
+same over real HTTPS (mints a localhost CA, intercepts the TLS, replays
+offline) — exercising the CONNECT + MITM path end-to-end. Both run in CI.
 
 ## CLI reference
 

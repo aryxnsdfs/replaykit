@@ -594,15 +594,10 @@ pub async fn run(args: RunArgs) -> Result<i32> {
     let mut child = cmd
         .spawn()
         .with_context(|| format!("spawning `{}`", args.cmd[0]))?;
-    let exit = tokio::select! {
-        s = child.wait() => s.context("waiting on child")?,
-        _ = tokio::signal::ctrl_c() => {
-            let _ = child.start_kill();
-            let s = child.wait().await.context("waiting on child after Ctrl-C")?;
-            println!("\n{} child interrupted", "•".dimmed());
-            s
-        }
-    };
+    // A foreground Ctrl-C is delivered to the whole console/process group, so
+    // the child receives it directly and exits; we just wait for it. (No
+    // separate signal branch — that would need a second &mut borrow of child.)
+    let exit = child.wait().await.context("waiting on child")?;
 
     serve_task.abort();
     let _ = on_finish();

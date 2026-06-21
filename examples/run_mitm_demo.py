@@ -77,21 +77,45 @@ def wait_port(port: int, timeout: float = 15.0) -> None:
     raise TimeoutError(f"port {port} did not open in {timeout}s")
 
 
-def mint_localhost_cert(out_dir: Path) -> tuple[Path, Path]:
-    """Mint a self-signed cert+key for `localhost` and return (cert_pem, key_pem)."""
+def mint_localhost_cert(out_dir: Path) -> tuple[Path, Path, Path]:
+    """Mint a CA + a leaf cert for `localhost`.
+
+    Returns (ca_cert_pem, leaf_cert_pem, leaf_key_pem). The mock server serves
+    the leaf; replaykit's upstream client trusts the CA via REPLAYKIT_EXTRA_ROOTS.
+    A proper chain (leaf with serverAuth EKU, signed by the CA) is required —
+    rustls/webpki rejects a self-signed CA cert used directly as an end-entity
+    leaf, which is what an earlier version of this script did.
+    """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
     now = datetime.now(timezone.utc)
-    cert = (
+
+    # --- root CA ---
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "replaykit-mock-ca")])
+    ca_cert = (
         x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(private_key=ca_key, algorithm=hashes.SHA256())
+    )
+
+    # --- leaf signed by the CA ---
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    leaf_cert = (
+        x509.CertificateBuilder()
+        .subject_name(leaf_name)
+        .issuer_name(ca_name)
+        .public_key(leaf_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=5))
         .not_valid_after(now + timedelta(days=30))
@@ -99,20 +123,31 @@ def mint_localhost_cert(out_dir: Path) -> tuple[Path, Path]:
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),
             critical=False,
         )
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(private_key=key, algorithm=hashes.SHA256())
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(private_key=ca_key, algorithm=hashes.SHA256())
     )
-    cert_pem = out_dir / "mock-cert.pem"
-    key_pem = out_dir / "mock-key.pem"
-    cert_pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+
+    ca_pem = out_dir / "mock-ca.pem"
+    leaf_pem = out_dir / "mock-leaf.pem"
+    key_pem = out_dir / "mock-leaf-key.pem"
+    ca_pem.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+    # Serve the full chain (leaf + CA) so the client can build it.
+    leaf_pem.write_bytes(
+        leaf_cert.public_bytes(serialization.Encoding.PEM)
+        + ca_cert.public_bytes(serialization.Encoding.PEM)
+    )
     key_pem.write_bytes(
-        key.private_bytes(
+        leaf_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    return cert_pem, key_pem
+    return ca_pem, leaf_pem, key_pem
 
 
 class _MockHandler(http.server.BaseHTTPRequestHandler):
@@ -204,12 +239,13 @@ def main() -> int:
             return 1
         replaykit_ca_pem = pems[0]
 
-    banner("mint localhost cert + start TLS mock")
-    mock_cert, mock_key = mint_localhost_cert(cert_dir)
-    httpd = start_mock(mock_cert, mock_key)
+    banner("mint localhost CA + leaf, start TLS mock")
+    mock_ca, mock_leaf, mock_key = mint_localhost_cert(cert_dir)
+    httpd = start_mock(mock_leaf, mock_key)
 
     env = dict(os.environ)
-    env["REPLAYKIT_EXTRA_ROOTS"] = str(mock_cert)
+    # replaykit's upstream client must trust the mock CA to record over TLS.
+    env["REPLAYKIT_EXTRA_ROOTS"] = str(mock_ca)
 
     try:
         banner("RECORD (HTTPS through CONNECT + MITM)")
@@ -225,7 +261,7 @@ def main() -> int:
             env=env,
         )
         wait_port(PROXY_PORT)
-        status_rec, body_rec = client_request(replaykit_ca_pem, mock_cert)
+        status_rec, body_rec = client_request(replaykit_ca_pem, mock_ca)
         print(f"recorded: status={status_rec} bytes={len(body_rec)}")
         time.sleep(0.5)
         stop(rec)
@@ -244,7 +280,7 @@ def main() -> int:
     )
     wait_port(PROXY_PORT)
     try:
-        status_rep, body_rep = client_request(replaykit_ca_pem, mock_cert)
+        status_rep, body_rep = client_request(replaykit_ca_pem, mock_ca)
         print(f"replayed: status={status_rep} bytes={len(body_rep)}")
     finally:
         stop(rep)
