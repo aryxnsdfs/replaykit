@@ -32,11 +32,46 @@ and debuggable**.
 
 ## 30-second start
 
-```bash
-# 1. Install (Linux/macOS). Windows: see Installation below.
-curl -fsSL https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.sh | sh
+### Install first
 
-# 2. Run your agent through it. Records the first time, replays offline after.
+**Prebuilt binary (recommended):**
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/aryxnsdfs/replaykit/main/install.ps1 | iex
+```
+
+**Building from source on Windows requires two installs:**
+
+```powershell
+# 1. Rust / Cargo
+winget install Rustlang.Rustup
+
+# 2. Visual Studio Build Tools with the C++ linker
+winget install Microsoft.VisualStudio.2022.BuildTools
+```
+
+In the Visual Studio Installer, choose **Build Tools 2022 → Modify → Desktop
+development with C++**. This installs `link.exe`, which Rust needs on Windows.
+Then build from a VS-enabled shell:
+
+```powershell
+cmd /c "`"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat`" && cd /d C:\path\to\replaykit && %USERPROFILE%\.cargo\bin\cargo.exe build --release"
+```
+
+If `replaykit` is not on `PATH`, run it by full path:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\replaykit\replaykit.exe" --help
+```
+
+```bash
+# Run your agent through it. Records the first time, replays offline after.
 replaykit run --cassette runs/demo --preset openai -- python my_agent.py
 ```
 
