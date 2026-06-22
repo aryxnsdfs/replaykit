@@ -53,6 +53,7 @@ impl AutoEngine {
         record: Arc<RecordEngine>,
         match_config: MatchConfig,
     ) -> Self {
+        let match_config = daemon_match_config(match_config);
         let jsonl_path = reader.root().join(INTERACTIONS_FILE);
         let file_len = std::fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0);
         let index = Mutex::new(IndexState {
@@ -141,5 +142,70 @@ impl AutoEngine {
                 )
             }
         }
+    }
+}
+
+fn daemon_match_config(mut cfg: MatchConfig) -> MatchConfig {
+    if cfg.min_tier < Tier::Normalized {
+        cfg.min_tier = Tier::Normalized;
+    }
+    cfg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_raises_loose_matching_to_normalized() {
+        let cfg = daemon_match_config(MatchConfig {
+            min_tier: Tier::Structural,
+            ..MatchConfig::default()
+        });
+        assert_eq!(cfg.min_tier, Tier::Normalized);
+    }
+
+    #[test]
+    fn daemon_respects_stricter_exact_matching() {
+        let cfg = daemon_match_config(MatchConfig {
+            min_tier: Tier::Exact,
+            ..MatchConfig::default()
+        });
+        assert_eq!(cfg.min_tier, Tier::Exact);
+    }
+
+    #[test]
+    fn daemon_does_not_match_different_ollama_prompts_structurally() {
+        let cfg = daemon_match_config(MatchConfig::default());
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let fruits = br#"{"model":"qwen2.5:0.5b","prompt":"Name three fruits","stream":true}"#;
+        let rude = br#"{"model":"qwen2.5:0.5b","prompt":"fuck you","stream":true}"#;
+
+        let a = matcher::compute_keys(
+            &RequestView {
+                method: "POST",
+                url: "http://localhost:11434/api/generate",
+                host: "localhost",
+                path: "/api/generate",
+                query: "",
+                headers: &headers,
+                body: fruits,
+            },
+            &cfg,
+        );
+        let b = matcher::compute_keys(
+            &RequestView {
+                method: "POST",
+                url: "http://localhost:11434/api/generate",
+                host: "localhost",
+                path: "/api/generate",
+                query: "",
+                headers: &headers,
+                body: rude,
+            },
+            &cfg,
+        );
+
+        assert!(matcher::compare(&a, &b, &cfg).is_none());
     }
 }

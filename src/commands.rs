@@ -229,7 +229,7 @@ pub async fn replay(args: ReplayArgs) -> Result<i32> {
 /// `replaykit daemon` — persistent hybrid proxy (replay known, record new).
 pub async fn daemon(args: DaemonArgs) -> Result<i32> {
     let (preset, upstream) = resolve_upstream(args.preset.as_deref(), args.upstream.as_deref())?;
-    let match_config = build_match_config(&args.matching)?;
+    let match_config = daemon_match_config(build_match_config(&args.matching)?);
     let ca_dir = args.ca_dir.unwrap_or_else(default_ca_dir);
     let addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()
@@ -624,6 +624,13 @@ fn build_match_config(m: &MatchArgs) -> Result<MatchConfig> {
         cfg.volatile_json_fields.push(f.to_lowercase());
     }
     Ok(cfg)
+}
+
+fn daemon_match_config(mut cfg: MatchConfig) -> MatchConfig {
+    if cfg.min_tier < Tier::Normalized {
+        cfg.min_tier = Tier::Normalized;
+    }
+    cfg
 }
 
 /// Load the CA if it exists. Local presets never need it; cloud presets use it

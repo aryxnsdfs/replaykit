@@ -180,6 +180,7 @@ pub fn compute_keys(req: &RequestView, cfg: &MatchConfig) -> MatchKeys {
             Some(v) => {
                 let mut v = v.clone();
                 strip_volatile(&mut v, &cfg.volatile_json_fields);
+                normalize_strings(&mut v);
                 h.update(canonical_json(&v).as_bytes());
             }
             None => {
@@ -291,6 +292,95 @@ fn strip_volatile(v: &mut Value, volatile: &[String]) {
         }
         _ => {}
     }
+}
+
+/// Normalize textual JSON scalar values before the normalized-tier hash. This
+/// keeps replay robust to harmless prompt spelling/casing/spacing drift while
+/// preserving JSON shape and non-text scalar values for stricter matching.
+fn normalize_strings(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for (_, child) in map.iter_mut() {
+                normalize_strings(child);
+            }
+        }
+        Value::Array(arr) => {
+            for child in arr.iter_mut() {
+                normalize_strings(child);
+            }
+        }
+        Value::String(s) => {
+            *s = normalize_text_scalar(s);
+        }
+        _ => {}
+    }
+}
+
+fn normalize_text_scalar(s: &str) -> String {
+    let folded = collapse_ascii_whitespace(&s.to_lowercase());
+    mask_dynamic_literals(&folded)
+}
+
+fn collapse_ascii_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn mask_dynamic_literals(s: &str) -> String {
+    s.split_whitespace()
+        .map(mask_dynamic_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn mask_dynamic_token(token: &str) -> &str {
+    let trimmed = token.trim_matches(|c: char| c.is_ascii_punctuation());
+    if is_uuid(trimmed) {
+        "{{UUID}}"
+    } else if is_timestamp_like(trimmed) {
+        "{{TIMESTAMP}}"
+    } else if is_long_number(trimmed) {
+        "{{NUMBER}}"
+    } else {
+        token
+    }
+}
+
+fn is_long_number(s: &str) -> bool {
+    s.len() >= 5 && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_timestamp_like(s: &str) -> bool {
+    if s.len() >= 10
+        && s.as_bytes().get(4) == Some(&b'-')
+        && s.as_bytes().get(7) == Some(&b'-')
+        && s.chars()
+            .enumerate()
+            .all(|(i, c)| matches!(i, 4 | 7) || c.is_ascii_digit())
+    {
+        return true;
+    }
+    if s.len() >= 8
+        && s.as_bytes().get(2) == Some(&b':')
+        && s.as_bytes().get(5) == Some(&b':')
+        && s.chars()
+            .enumerate()
+            .all(|(i, c)| matches!(i, 2 | 5) || c.is_ascii_digit())
+    {
+        return true;
+    }
+    false
+}
+
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let lens = [8, 4, 4, 4, 12];
+    parts
+        .iter()
+        .zip(lens)
+        .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Reduce a value to its structural shape: keys preserved, every scalar
@@ -614,5 +704,69 @@ mod tests {
         let m = compare(&a, &b, &cfg).unwrap();
         assert_eq!(m.tier, Tier::Similarity);
         assert!(m.score > 0.5);
+    }
+
+    #[test]
+    fn normalized_ignores_prompt_case_and_extra_spaces() {
+        let cfg = MatchConfig::default();
+        let h = vec![("content-type".into(), "application/json".into())];
+        let b1 = br#"{"model":"qwen2.5:0.5b","prompt":"whats the size of paris","stream":true}"#;
+        let b2 = br#"{"model":"qwen2.5:0.5b","prompt":" Whats   the SIZE of paris ","stream":true}"#;
+        let a = compute_keys(
+            &view(
+                "POST",
+                "http://localhost:11434/api/generate",
+                "localhost",
+                "/api/generate",
+                &h,
+                b1,
+            ),
+            &cfg,
+        );
+        let b = compute_keys(
+            &view(
+                "POST",
+                "http://localhost:11434/api/generate",
+                "localhost",
+                "/api/generate",
+                &h,
+                b2,
+            ),
+            &cfg,
+        );
+        let m = compare(&a, &b, &cfg).unwrap();
+        assert_eq!(m.tier, Tier::Normalized);
+    }
+
+    #[test]
+    fn normalized_masks_common_dynamic_literals_in_prompts() {
+        let cfg = MatchConfig::default();
+        let h = vec![("content-type".into(), "application/json".into())];
+        let b1 = br#"{"model":"gpt-4","messages":[{"role":"user","content":"Current time: 2026-06-22 order 94827"}]}"#;
+        let b2 = br#"{"model":"gpt-4","messages":[{"role":"user","content":"current time: 2026-06-23 order 11122"}]}"#;
+        let a = compute_keys(
+            &view(
+                "POST",
+                "https://api.openai.com/v1/chat",
+                "api.openai.com",
+                "/v1/chat",
+                &h,
+                b1,
+            ),
+            &cfg,
+        );
+        let b = compute_keys(
+            &view(
+                "POST",
+                "https://api.openai.com/v1/chat",
+                "api.openai.com",
+                "/v1/chat",
+                &h,
+                b2,
+            ),
+            &cfg,
+        );
+        let m = compare(&a, &b, &cfg).unwrap();
+        assert_eq!(m.tier, Tier::Normalized);
     }
 }
