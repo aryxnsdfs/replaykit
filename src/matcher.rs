@@ -711,7 +711,8 @@ mod tests {
         let cfg = MatchConfig::default();
         let h = vec![("content-type".into(), "application/json".into())];
         let b1 = br#"{"model":"qwen2.5:0.5b","prompt":"whats the size of paris","stream":true}"#;
-        let b2 = br#"{"model":"qwen2.5:0.5b","prompt":" Whats   the SIZE of paris ","stream":true}"#;
+        let b2 =
+            br#"{"model":"qwen2.5:0.5b","prompt":" Whats   the SIZE of paris ","stream":true}"#;
         let a = compute_keys(
             &view(
                 "POST",
