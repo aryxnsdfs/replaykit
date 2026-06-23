@@ -11,6 +11,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)](https://www.rust-lang.org)
 
+🎥 **[Watch the 5-minute walkthrough →](https://youtu.be/ToNb-yoFjQc)**
+
 </div>
 
 ---
